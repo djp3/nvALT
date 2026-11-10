@@ -54,6 +54,17 @@ typedef struct NSRange32 {
 typedef NSRange NSRange32;
 #endif
 
+
+NSString *NVTitlesOfNotes(NSArray *notes) {
+	NSMutableArray *titles = [NSMutableArray array];
+	NSUInteger i, shown = MIN([notes count], (NSUInteger)8);
+	for (i = 0; i < shown; i++)
+		[titles addObject:titleOfNote([notes objectAtIndex:i])];
+	if ([notes count] > shown)
+		[titles addObject:[NSString stringWithFormat:@"and %lu more", (unsigned long)([notes count] - shown)]];
+	return [NSString stringWithFormat:@"[%@]", [titles componentsJoinedByString:@" | "]];
+}
+
 @implementation NoteObject
 
 static FSRef *noteFileRefInit(NoteObject* obj);

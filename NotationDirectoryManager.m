@@ -218,6 +218,7 @@ void NotesDirFNSubscriptionProc(FNMessage message, OptionBits flags, void * refc
 		//NSLog(@"read files in directory");
 		
 		directoryChangesFound = NO;
+		NVLogInfo(@"notes list: directory scan sees %lu files for %lu notes", (unsigned long)catEntriesCount, (unsigned long)[allNotes count]);
 		if (catEntriesCount && [allNotes count]) {
 			[self makeNotesMatchCatalogEntries:sortedCatalogEntries ofSize:catEntriesCount];
 		} else {
@@ -238,6 +239,7 @@ void NotesDirFNSubscriptionProc(FNMessage message, OptionBits flags, void * refc
 		}
 		
 		if (directoryChangesFound) {
+			NVLogInfo(@"notes list: directory scan found changes; resorting and refiltering");
 			[self resortAllNotes];
 		    [self refilterNotes];
 			

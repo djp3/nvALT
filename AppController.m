@@ -911,6 +911,9 @@ terminateApp:
 
 - (IBAction)deleteNote:(id)sender {
 	NSIndexSet *indexes = [notesTableView selectedRowIndexes];
+	NVLogInfo(@"notes list: delete asked for rows %@ of %ld shown, %lu notes in all; titles %@; field '%@'; typed '%@' (cached %d); filtering from typing %d; current note '%@'",
+			  indexes, (long)[notesTableView numberOfRows], (unsigned long)[notationController totalNoteCount], NVTitlesOfNotes([notationController notesAtIndexes:indexes]),
+			  [field stringValue], typedString, (int)typedStringIsCached, (int)isFilteringFromTyping, currentNote ? titleOfNote(currentNote) : @"(none)");
 	if ([indexes count] > 0) {
 		
 		if ([prefsController confirmNoteDeletion]) {
@@ -929,6 +932,7 @@ terminateApp:
             if (IsMavericksOrLater) {
                 [alert beginSheetModalForWindow:window completionHandler:^(NSModalResponse returnCode) {
                     if (returnCode == NSAlertFirstButtonReturn) {
+                        NVLogInfo(@"notes list: delete confirmed for rows %@; field '%@'", indexes, [field stringValue]);
                         [notationController removeNotesAtIndexes:indexes];
                     }
                 }];
@@ -941,6 +945,7 @@ terminateApp:
             
 		} else {
             //just delete the notes outright
+            NVLogInfo(@"notes list: deleting rows %@ without confirmation", indexes);
             [notationController removeNotesAtIndexes:indexes];
 		}
 	}
@@ -1422,6 +1427,7 @@ static NSURL *NVHTTPURLFromImportString(NSString *entered) {
 - (void)cancelOperation:(id)sender {
 	//simulate a search for nothing
 	if ([window isKeyWindow]) {
+		NVLogInfo(@"notes list: escape clears the search; field was '%@', find bar visible %d", [field stringValue], (int)(IsLionOrLater && [textView textFinderIsVisible]));
 		if (IsLionOrLater&&([textView textFinderIsVisible])) {
             [[NSNotificationCenter defaultCenter] postNotificationName:@"TextFinderShouldHide" object:self];
             return;
@@ -1660,6 +1666,7 @@ static NSURL *NVHTTPURLFromImportString(NSString *entered) {
 		NSString *fieldString = [fieldEditor string];
 		
 		BOOL didFilter = [notationController filterNotesFromString:fieldString];
+		NVLogInfo(@"notes list: typed '%@'; filtered %d; %ld rows shown; preferred row %ld", fieldString, (int)didFilter, (long)[notesTableView numberOfRows], (long)[notationController preferredSelectedNoteIndex]);
 		
 		if ([fieldString length] > 0) {
 //             [[NSNotificationCenter defaultCenter] postNotificationName:@"TextFindContextShouldReset" object:self];
@@ -1706,6 +1713,7 @@ static NSURL *NVHTTPURLFromImportString(NSString *entered) {
 			//selecting nothing; nothing typed
 		selectNothing:
 			isFilteringFromTyping = NO;
+			NVLogInfo(@"notes list: typing selects nothing");
 			[notesTableView deselectAll:nil];
 			
 			//reloadData could have already de-selected us, and hence this notification would not be sent from -deselectAll:
@@ -1776,6 +1784,10 @@ static NSURL *NVHTTPURLFromImportString(NSString *entered) {
 - (void)processChangedSelectionForTable:(NSTableView*)table {
 	NSInteger selectedRow = [table selectedRow];
 	NSInteger numberSelected = [table numberOfSelectedRows];
+	if (table == (NSTableView*)notesTableView)
+		NVLogInfo(@"notes list: selection now row %ld (%ld selected) of %ld; filtering from typing %d; creating %d; typed '%@' (cached %d); field '%@'; current note '%@'",
+				  (long)selectedRow, (long)numberSelected, (long)[table numberOfRows], (int)isFilteringFromTyping, (int)isCreatingANote, typedString, (int)typedStringIsCached,
+				  [field stringValue], currentNote ? titleOfNote(currentNote) : @"(none)");
 	
 	NSTextView *fieldEditor = (NSTextView*)[field currentEditor];
 	
@@ -1837,6 +1849,7 @@ static NSURL *NVHTTPURLFromImportString(NSString *entered) {
 			if (typedStringIsCached) {
 				//restore the un-selected state, but only if something had been first selected to cause that state to be saved
 				[field setStringValue:typedString];
+				NVLogInfo(@"notes list: nothing selected, so the typed text '%@' is back in the field", typedString);
 			}
 			[textView setString:@""];
 			[textView redisplayAfterNoteChange];
@@ -2115,6 +2128,7 @@ static NSURL *NVHTTPURLFromImportString(NSString *entered) {
 	//to be invoked after loading a notationcontroller
 	
 	NSString *searchString = [prefsController lastSearchString];
+	NVLogInfo(@"notes list: restoring at launch with saved search '%@'", searchString);
 	if ([searchString length])
 		[self searchForString:searchString];
 	else
@@ -2129,6 +2143,7 @@ static NSURL *NVHTTPURLFromImportString(NSString *entered) {
 - (NSUInteger)revealNote:(NoteObject*)note options:(NSUInteger)opts {
 	if (note) {
 		NSUInteger selectedNoteIndex = [notationController indexInFilteredListForNoteIdenticalTo:note];
+		NVLogInfo(@"notes list: reveal '%@' at row %ld (options %lu)", titleOfNote(note), selectedNoteIndex == NSNotFound ? -1L : (long)selectedNoteIndex, (unsigned long)opts);
 		
 		if (selectedNoteIndex == NSNotFound) {
 			NVLogInfo(@"Note was not visible--showing all notes and trying again");
@@ -2186,6 +2201,7 @@ static NSURL *NVHTTPURLFromImportString(NSString *entered) {
 - (void)searchForString:(NSString*)string {
 	
 	if (string) {
+		NVLogInfo(@"notes list: search for '%@' requested", string);
 		
 		//problem: this won't work when the toolbar (and consequently the searchfield) is hidden;
 		//and neither will the controlTextDidChange implementation
@@ -2281,6 +2297,7 @@ static NSURL *NVHTTPURLFromImportString(NSString *entered) {
                 
 				[savedSelectedNotes release];
 				savedSelectedNotes = [[someNotation notesAtIndexes:indexSet] retain];
+				NVLogInfo(@"notes list: about to change; remembering selected %@", NVTitlesOfNotes(savedSelectedNotes));
 			}
 			
 			listUpdateViewCtx = [notesTableView viewingLocation];
@@ -2295,6 +2312,8 @@ static NSURL *NVHTTPURLFromImportString(NSString *entered) {
         
 		[notesTableView reloadData];
 		//[notesTableView noteNumberOfRowsChanged];
+		NVLogInfo(@"notes list: changed; %ld rows shown of %lu notes; filtering from typing %d; remembered selection %@",
+				  (long)[notesTableView numberOfRows], (unsigned long)[someNotation totalNoteCount], (int)isFilteringFromTyping, savedSelectedNotes ? NVTitlesOfNotes(savedSelectedNotes) : @"(none)");
 		
 		if (!isFilteringFromTyping) {
 			if (savedSelectedNotes) {
@@ -2303,6 +2322,7 @@ static NSURL *NVHTTPURLFromImportString(NSString *entered) {
 				savedSelectedNotes = nil;
 				
 				[notesTableView selectRowIndexes:indexes byExtendingSelection:NO];
+				NVLogInfo(@"notes list: reselected rows %@", indexes);
 			}
 			
 			[notesTableView setViewingLocation:listUpdateViewCtx];

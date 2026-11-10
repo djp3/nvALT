@@ -78,6 +78,7 @@
 
 - (void)addDeletedNotes:(NSArray*)array {
 	if ([array count] > 0) {
+		NVLogInfo(@"notes list: files gone from disk for %@", NVTitlesOfNotes(array));
 		if (![deletedNotes count]) {
 			//canceling the delayed selector would not be necessary if updateForVerifiedExistingNote 
 			//did not have the potential to clear out deletedNotes before the selector posted to the next run loop
@@ -107,6 +108,7 @@
 - (void)addDeletedNote:(NoteObject*)aNote {
 	
 	if (aNote) {
+		NVLogInfo(@"notes list: file gone from disk for '%@'", titleOfNote(aNote));
 		if (![deletedNotes count]) {
 			[NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(processDeletedNotes) object:nil];
 			[self performSelector:@selector(processDeletedNotes) withObject:nil afterDelay:0];
@@ -211,6 +213,7 @@ void updateForVerifiedExistingNote(DeletionManager *self, NoteObject *goodNote) 
 }
 
 - (void)removeDeletedNotes {
+	NVLogInfo(@"notes list: removing %lu notes whose files are gone", (unsigned long)[deletedNotes count]);
 	
 	//for purposes of generating useful undo messages
 	if ([deletedNotes count] > 1) {

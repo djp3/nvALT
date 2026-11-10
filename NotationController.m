@@ -1116,6 +1116,7 @@ bail:
 
 
 - (void)removeNotesAtIndexes:(NSIndexSet *)indexes{
+	NVLogInfo(@"notes list: removing rows %@", indexes);
     //just delete the notes outright
     if (!indexes||([indexes count]==0)) {
         return;
@@ -1145,6 +1146,7 @@ bail:
     //reset linking labels and their notes
     
 	[aNoteObject retain];
+	NVLogInfo(@"notes list: removing '%@' from %lu notes; %lu rows filtered by '%s'", titleOfNote(aNoteObject), (unsigned long)[allNotes count], (unsigned long)[notesListDataSource count], currentFilterStr ? currentFilterStr : "");
 	
 	[aNoteObject disconnectLabels];
 	[aNoteObject abortEditingInExternalEditor];
@@ -1350,6 +1352,7 @@ bail:
 
 - (void)refilterNotes {
 	
+    NVLogInfo(@"notes list: refiltering with '%s'", currentFilterStr ? currentFilterStr : "");
     [delegate notationListMightChange:self];
     [self filterNotesFromUTF8String:(currentFilterStr ? currentFilterStr : "") forceUncached:YES];
     [delegate notationListDidChange:self];
@@ -1364,6 +1367,7 @@ bail:
 	NSAssert(searchString != NULL, @"filterNotesFromUTF8String requires a non-NULL argument");
 	
 	newLen = strlen(searchString);
+	NVLogInfo(@"notes list: filter '%s' (previous '%s', from scratch %d); %lu rows before, %lu notes in all", searchString, currentFilterStr ? currentFilterStr : "(none)", (int)forceUncached, (unsigned long)initialCount, (unsigned long)[allNotes count]);
 
 	NSString *newQuery = [NSString stringWithUTF8String:searchString];
 	BOOL queryHasTagWord = NVQueryContainsTagWord(newQuery);
@@ -1379,6 +1383,7 @@ bail:
 		
 		[notesListDataSource fillArrayFromArray:allNotes];
 		//[labelsListController unfilterLabels];
+		NVLogInfo(@"notes list: filter restarts from all %lu notes", (unsigned long)[allNotes count]);
 		
 		stringHasExistingPrefix = NO;
 		lastWordInFilterStr = 0;
@@ -1491,6 +1496,7 @@ bail:
     }
     
     currentFilterStr = replaceString(currentFilterStr, searchString);
+	NVLogInfo(@"notes list: filter '%s' leaves %lu rows; preferred row %ld; changed %d", searchString, (unsigned long)filteredNoteCount, selectedNoteIndex == NSNotFound ? -1L : (long)selectedNoteIndex, (int)didFilterNotes);
 	
 	if (!initialCount && initialCount == filteredNoteCount)
 		return NO;
@@ -1586,6 +1592,7 @@ bail:
 
 //re-sort without refiltering, to avoid removing notes currently being edited
 - (void)sortAndRedisplayNotes {
+	NVLogInfo(@"notes list: resorting the shown rows (%lu of %lu)", (unsigned long)[notesListDataSource count], (unsigned long)[allNotes count]);
 	
 	[delegate notationListMightChange:self];
 
@@ -1616,6 +1623,7 @@ bail:
 }
 
 - (void)resortAllNotes {
+	NVLogInfo(@"notes list: resorting all %lu notes", (unsigned long)[allNotes count]);
 	
 	NoteAttributeColumn *col = sortColumn;
 	

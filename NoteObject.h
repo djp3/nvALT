@@ -245,3 +245,6 @@ NSInteger compareFileSize(id *a, id *b);
 - (void)note:(NoteObject*)note attributeChanged:(NSString*)attribute;
 @end
 
+/* The titles of up to eight notes, for diagnostic messages about the notes list. */
+NSString *NVTitlesOfNotes(NSArray *notes);
+
