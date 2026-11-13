@@ -37,6 +37,7 @@
 #import "BufferUtils.h"
 #import "LinkingEditor.h"
 #import "NoteLayout.h"
+#import "ListSplit.h"
 #import "MarkdownHighlight.h"
 #import "EmptyView.h"
 #import "DualField.h"
@@ -298,8 +299,11 @@ static BOOL nvApplyingWindowChrome;
 	if (!awakenedViews) {
 		//NSLog(@"all (hopefully relevant) views awakend!");
 		[self _configureDividerForCurrentLayout];
-		[splitView restoreState:YES];
-		if ([notesSubview dimension]<200.0) {
+		BOOL restoredSplit = [splitView restoreState:YES];
+		/* A saved height under 200 is still a real list. Replacing it made a
+		   100 or 150 point list come back as the default, about 125 points
+		   in a shorter window, while 225 was left alone. */
+		if (NVShouldApplyDefaultListDimension(restoredSplit, [notesSubview dimension])) {
 			if ([splitView isVertical]) {   ///vertical means "Horiz layout"/notes list is to the left of the note body
 				if (([splitView frame].size.width < 600.0) && ([splitView frame].size.width - 400 > [notesSubview dimension])) {
 					[notesSubview setDimension:[splitView frame].size.width-400.0];
@@ -1774,13 +1778,18 @@ static NSURL *NVHTTPURLFromImportString(NSString *entered) {
 	NSEvent *event = [window currentEvent];
     
 	NSEventType type = [event type];
+	/* Down-arrow from the search field posts this before the new row exists.
+	   An empty selection here is the gap between rows. Treating it as "no
+	   note" clears the body, and turning multiple selection off to put it
+	   back can drop the row that was just shown. The did-change notification
+	   is the one that lands on a note. */
+	if (type != NSLeftMouseDragged && type != NSLeftMouseDown)
+		return;
+
 	//do not allow drag-selections unless a modifier is pressed
-	if (type == NSLeftMouseDragged || type == NSLeftMouseDown) {
-		NSUInteger flags = [event modifierFlags];
-		if ((flags & NSShiftKeyMask) || (flags & NSCommandKeyMask)) {
-			allowMultipleSelection = YES;
-		}
-	}
+	NSUInteger flags = [event modifierFlags];
+	if ((flags & NSShiftKeyMask) || (flags & NSCommandKeyMask))
+		allowMultipleSelection = YES;
 	
 	if (allowMultipleSelection != [notesTableView allowsMultipleSelection]) {
 		//we may need to hack some hidden NSTableView instance variables to improve mid-drag flags-changing
@@ -1956,78 +1965,79 @@ static NSURL *NVHTTPURLFromImportString(NSString *entered) {
 
 - (BOOL)displayContentsForNoteAtIndex:(NSUInteger)noteIndex {
 	NoteObject *note = [notationController noteObjectAtFilteredIndex:noteIndex];
-	if (note != currentNote) {
-		[self setEmptyViewState:NO];
-		[field setShowsDocumentIcon:YES];
-		
-		//actually load the new note
-		[self _setCurrentNote:note];
-		
-		NSRange firstFoundTermRange = NSMakeRange(NSNotFound,0);
-		NSRange noteSelectionRange = [currentNote lastSelectedRange];
-		
-		if (noteSelectionRange.location == NSNotFound ||
-			NSMaxRange(noteSelectionRange) > [[note contentString] length]) {
-			//revert to the top; selection is invalid
-			noteSelectionRange = NSMakeRange(0,0);
-		}
-		
-		//[textView beginInhibitingUpdates];
-		//scroll to the top first in the old note body if necessary, because the text will (or really ought to) have already been laid-out
-		//if ([textView visibleRect].origin.y > 0)
-		//	[textView scrollRangeToVisible:NSMakeRange(0,0)];
-		
-		if (![textView didRenderFully]) {
-			//NSLog(@"redisplay because last note was too long to finish before we switched");
-			[textView setNeedsDisplayInRect:[textView visibleRect] avoidAdditionalLayout:YES];
-		}
-		
-		//restore string
-		[[textView textStorage] setAttributedString:[note contentString]];
-		NVLayOutEntireNote(textView);
-		[self postTextUpdate];
-		[self updateWordCount:(![prefsController showWordCount])];
-		//[textView setAutomaticallySelectedRange:NSMakeRange(0,0)];
-		
-		// The search that found this note stays marked across notes.
-		// Focusing the note body clears it.
-		[textView removeSearchTermHighlights];
-		NSString *highlightString = [self searchStringForHighlighting];
-		NSArray *foundRanges = nil;
-		if (highlightString)
-			foundRanges = [textView highlightTermsTemporarily:highlightString avoidHighlight:![prefsController highlightSearchTerms]];
-		//matches in the body only count when the note was not reached by typing its title
-		if ([foundRanges count] && (unsigned)noteIndex != [notationController preferredSelectedNoteIndex])
-			firstFoundTermRange = [[foundRanges objectAtIndex:0] rangeValue];
-		else
-			foundRanges = nil;
-		
-		//if there was nothing selected, select the first found range
-		if (!noteSelectionRange.length && firstFoundTermRange.location != NSNotFound)
-			noteSelectionRange = firstFoundTermRange;
-		
-		//select and scroll: the note comes back to the line it was left at (or to its selection when it has
-		//none), then, while a search is on, moves the least distance that shows the nearest match
-		[textView setAutomaticallySelectedRange:noteSelectionRange];
-		if (!NVScrollCharIndexToTop(textView, [note firstVisibleCharIndex]))
-			NVScrollRangeIntoView(textView, noteSelectionRange);
-		NVScrollToShowNearestRange(textView, foundRanges);
-		[textView markScrollPositionAutomatic];
-		//looking around the matches is not remembered until the user clicks or types in the note;
-		//a note reached by typing its title, or one with no match in its body, is not being looked around
-		scrollGuarded = foundRanges != nil;
-		[textView redisplayAfterNoteChange];
-		
-		//NSString *words = noteIndex != [notationController preferredSelectedNoteIndex] ? typedString : nil;
-		//[textView setFutureSelectionRange:noteSelectionRange highlightingWords:words];
-		
-        [self updateRTL];
-		[self refreshEditorShareButton];
-        
-		return YES;
+	if (note == currentNote) {
+		/* The body is already this note. A clip left in the previous note's
+		   tail stays blank until the note changes, so correct that here. */
+		NVRevealNoteTextIfScrolledPastIt(textView);
+		return NO;
+	}
+
+	[self setEmptyViewState:NO];
+	[field setShowsDocumentIcon:YES];
+	
+	//actually load the new note
+	[self _setCurrentNote:note];
+	
+	NSRange noteSelectionRange = [currentNote lastSelectedRange];
+	
+	if (noteSelectionRange.location == NSNotFound ||
+		NSMaxRange(noteSelectionRange) > [[note contentString] length]) {
+		//revert to the top; selection is invalid
+		noteSelectionRange = NSMakeRange(0,0);
 	}
 	
-	return NO;
+	//[textView beginInhibitingUpdates];
+	//scroll to the top first in the old note body if necessary, because the text will (or really ought to) have already been laid-out
+	//if ([textView visibleRect].origin.y > 0)
+	//	[textView scrollRangeToVisible:NSMakeRange(0,0)];
+	
+	if (![textView didRenderFully]) {
+		//NSLog(@"redisplay because last note was too long to finish before we switched");
+		[textView setNeedsDisplayInRect:[textView visibleRect] avoidAdditionalLayout:YES];
+	}
+	
+	//restore string
+	[[textView textStorage] setAttributedString:[note contentString]];
+	NVLayOutEntireNote(textView);
+	[self postTextUpdate];
+	[self updateWordCount:(![prefsController showWordCount])];
+	//[textView setAutomaticallySelectedRange:NSMakeRange(0,0)];
+	
+	// The search that found this note stays marked across notes.
+	// Focusing the note body clears it.
+	[textView removeSearchTermHighlights];
+	NSString *highlightString = [self searchStringForHighlighting];
+	NSArray *foundRanges = nil;
+	if (highlightString)
+		foundRanges = [textView highlightTermsTemporarily:highlightString avoidHighlight:![prefsController highlightSearchTerms]];
+	//matches in the body only count when the note was not reached by typing its title
+	if (![foundRanges count] || (unsigned)noteIndex == [notationController preferredSelectedNoteIndex])
+		foundRanges = nil;
+	
+	//scroll, then select: the note comes back to the line it was left at (or to its selection when it has
+	//none), then, while a search is on, moves the least distance that shows the nearest match. A bare caret
+	//goes on that match, the one on screen. The selection is set last and without moving the view, so the
+	//saved position is what stays on screen.
+	if (!NVScrollCharIndexToTop(textView, [note firstVisibleCharIndex]))
+		NVScrollRangeIntoView(textView, noteSelectionRange);
+	NSRange shownMatch = NVScrollToShowNearestRange(textView, foundRanges);
+	if (!noteSelectionRange.length && shownMatch.location != NSNotFound)
+		noteSelectionRange = shownMatch;
+	NVRevealNoteTextIfScrolledPastIt(textView);
+	[textView setAutomaticallySelectedRange:noteSelectionRange];
+	[textView markScrollPositionAutomatic];
+	//looking around the matches is not remembered until the user clicks or types in the note;
+	//a note reached by typing its title, or one with no match in its body, is not being looked around
+	scrollGuarded = foundRanges != nil;
+	[textView redisplayAfterNoteChange];
+	
+	//NSString *words = noteIndex != [notationController preferredSelectedNoteIndex] ? typedString : nil;
+	//[textView setFutureSelectionRange:noteSelectionRange highlightingWords:words];
+	
+        [self updateRTL];
+	[self refreshEditorShareButton];
+        
+	return YES;
 }
 
 //from linkingeditor
@@ -2402,6 +2412,7 @@ static NSURL *NVHTTPURLFromImportString(NSString *entered) {
 		NSArray *selRanges=[textView selectedRanges];
 		[[textView textStorage] setAttributedString:[aNoteObject contentString]];
 		NVLayOutEntireNote(textView);
+		NVRevealNoteTextIfScrolledPastIt(textView);
 		[textView redisplayAfterNoteChange];
         if (![selRanges isEqualToArray:[textView selectedRanges]]) {
             NSRange testEnd=[[selRanges lastObject] rangeValue];

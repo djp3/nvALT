@@ -163,6 +163,39 @@ void NVLayOutEntireNote(NSTextView *textView) {
 		return;
 	[scroll tile];
 	[scroll reflectScrolledClipView:[scroll contentView]];
+	NVRevealNoteTextIfScrolledPastIt(textView);
+}
+
+void NVRevealNoteTextIfScrolledPastIt(NSTextView *textView) {
+	NSScrollView *scroll;
+	NSLayoutManager *layout;
+	NSTextContainer *container;
+	NSRect used, visible;
+	NSPoint origin;
+	static BOOL revealing = NO;
+	if (!textView || revealing || layingOut)
+		return;
+	scroll = [textView enclosingScrollView];
+	layout = [textView layoutManager];
+	container = [textView textContainer];
+	if (!scroll || !layout || !container)
+		return;
+	if (![[textView string] length] || ![layout numberOfGlyphs])
+		return;
+	used = [layout usedRectForTextContainer:container];
+	if (NSHeight(used) < 1.0)
+		return;
+	origin = [textView textContainerOrigin];
+	used.origin.x += origin.x;
+	used.origin.y += origin.y;
+	visible = [textView visibleRect];
+	if (NSIntersectsRect(visible, used))
+		return;
+	/* The clip is in the empty tail left by a taller note. Nothing else will
+	   lay that area out or scroll back, because background layout is off. */
+	revealing = YES;
+	[textView scrollRectToVisible:NSMakeRect(used.origin.x, used.origin.y, 1.0, MIN(NSHeight(used), NSHeight(visible)))];
+	revealing = NO;
 }
 
 /* Layout works in container coordinates, which start below the top inset.
@@ -256,7 +289,7 @@ void NVScrollRangeIntoView(NSTextView *textView, NSRange range) {
 	[scroll reflectScrolledClipView:clip];
 }
 
-void NVScrollToShowNearestRange(NSTextView *textView, NSArray *ranges) {
+NSRange NVScrollToShowNearestRange(NSTextView *textView, NSArray *ranges) {
 	NSLayoutManager *layout = [textView layoutManager];
 	NSClipView *clip = [[textView enclosingScrollView] contentView];
 	NSUInteger length = [[textView string] length];
@@ -265,7 +298,7 @@ void NVScrollToShowNearestRange(NSTextView *textView, NSArray *ranges) {
 	NSRange nearest = NSMakeRange(NSNotFound, 0);
 	NSValue *value;
 	if (!textView || !layout || !clip || !length || ![ranges count])
-		return;
+		return nearest;
 	visible = [clip bounds];
 	originY = [textView textContainerOrigin].y;
 	for (value in ranges) {
@@ -285,7 +318,7 @@ void NVScrollToShowNearestRange(NSTextView *textView, NSArray *ranges) {
 			continue;
 		line.origin.y += originY;
 		if (NSMinY(line) >= NSMinY(visible) && NSMaxY(line) <= NSMaxY(visible))
-			return;
+			return range;
 		if (NSMaxY(line) <= NSMinY(visible))
 			distance = NSMinY(visible) - NSMaxY(line);
 		else if (NSMinY(line) >= NSMaxY(visible))
@@ -299,4 +332,5 @@ void NVScrollToShowNearestRange(NSTextView *textView, NSArray *ranges) {
 	}
 	if (nearest.location != NSNotFound)
 		NVScrollRangeIntoView(textView, nearest);
+	return nearest;
 }

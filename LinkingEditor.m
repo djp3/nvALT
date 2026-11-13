@@ -31,6 +31,8 @@
 #import "ClickBelowText.h"
 #import "SelectionRedraw.h"
 #import "TaskList.h"
+#import "ListOutdent.h"
+#import "ListIndent.h"
 #import "ETScrollView.h"
 #import "ETClipView.h"
 //#import "NSTextFinder.h"
@@ -109,6 +111,10 @@ static NSString * const NVSearchHighlightAttributeName = @"NVSearchHighlight";
 		[(LinkingEditor *)parent nv_drawSearchHighlightsInOverlay:self dirtyRect:dirtyRect];
 }
 
+@end
+
+@interface LinkingEditor (NVSelectionScroll)
+- (void)nv_allowSelectionScroll;
 @end
 
 @implementation LinkingEditor
@@ -228,6 +234,7 @@ if ([selectorString isEqualToString:SEL_STR(setNoteBodyFont:sender:)]) {
 }
 
 - (BOOL)becomeFirstResponder {
+	[self nv_allowSelectionScroll];
 	[self discardSearchHighlights];
 	[notesTableView setShouldUseSecondaryHighlightColor:YES];
 
@@ -1151,9 +1158,34 @@ static BOOL NVSearchHighlightColorMatches(NSColor *applied, NSColor *searchColor
 }
 
 - (void)setAutomaticallySelectedRange:(NSRange)newRange {
+	/* The selection a note is shown with must not move the view: the saved
+	   scroll position is applied around it. The text view scrolls to a new
+	   caret on its own, sometimes on a later layout pass, so a scroll that
+	   happens now is put back at once and one that comes later is ignored
+	   until the user does something or the next pass of the run loop. */
+	NSScrollView *scroll = [self enclosingScrollView];
+	NSClipView *clip = [scroll contentView];
+	NSPoint origin = [clip bounds].origin;
 	lastAutomaticallySelectedRange = newRange;
 	didChangeIntoAutomaticRange = NO;
+	selectionScrollSuppressed = YES;
+	[NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(nv_allowSelectionScroll) object:nil];
 	[self setSelectedRange:newRange];
+	if (clip && !NSEqualPoints([clip bounds].origin, origin)) {
+		[clip scrollToPoint:origin];
+		[scroll reflectScrolledClipView:clip];
+	}
+	[self performSelector:@selector(nv_allowSelectionScroll) withObject:nil afterDelay:0.0];
+}
+
+- (void)nv_allowSelectionScroll {
+	selectionScrollSuppressed = NO;
+}
+
+- (void)scrollRangeToVisible:(NSRange)range {
+	if (selectionScrollSuppressed)
+		return;
+	[super scrollRangeToVisible:range];
 }
 
 - (NSUInteger)firstVisibleCharIndexWasAutomatic:(BOOL*)automatic {
@@ -1895,6 +1927,7 @@ static NSColor *NVBlendColors(NSColor *first, NSColor *second, CGFloat fraction,
 }
 
 - (void)keyDown:(NSEvent*)anEvent {	
+	[self nv_allowSelectionScroll];
     //    [[NSNotificationCenter defaultCenter] postNotificationName:@"ModTimersShouldReset" object:nil];
 	unichar keyChar = [anEvent firstCharacterIgnoringModifiers];
     
@@ -2225,6 +2258,7 @@ static NSColor *NVBlendColors(NSColor *first, NSColor *second, CGFloat fraction,
 }
 
 - (void)mouseDown:(NSEvent *)event {
+	[self nv_allowSelectionScroll];
 	[self nv_noteBodyClaimed];
 	if ([self nv_toggleTaskCheckboxForEvent:event])
 		return;
@@ -2706,6 +2740,7 @@ static BOOL NVIsLinkBracket(unichar character) {
 	else
 		changedRange = NSMakeRange(changedRange.location, MIN(changedRange.length, stringLength - changedRange.location));
 
+	[self nv_allowSelectionScroll];
 	[self nv_noteBodyClaimed];
 
 
@@ -3708,11 +3743,14 @@ static BOOL NVBulletMarker(NSString *line, NSUInteger contentLength, NSUInteger 
 	NSRange selection = [self selectedRange];
 	if (![text length] || selection.location > [text length])
 		return NO;
-	NSUInteger endLocation = selection.length ? NSMaxRange(selection) - 1 : selection.location;
-	if (endLocation >= [text length])
-		endLocation = [text length] - 1;
-	NSRange firstLine = [text lineRangeForRange:NSMakeRange(MIN(selection.location, [text length] - 1), 0)];
-	NSRange lastLine = [text lineRangeForRange:NSMakeRange(endLocation, 0)];
+	NSUInteger start = MIN(selection.location, [text length]);
+	NSUInteger endLocation = selection.length ? NSMaxRange(selection) : selection.location;
+	if (endLocation > [text length])
+		endLocation = [text length];
+	if (selection.length && endLocation)
+		endLocation -= 1;
+	NSRange firstLine = NVLineRangeForCaret(text, start);
+	NSRange lastLine = NVLineRangeForCaret(text, endLocation);
 	NSUInteger tabWidth = [self listTabWidth];
 	NSMutableArray *lines = [NSMutableArray array];
 	NSUInteger scan = firstLine.location;
@@ -3766,14 +3804,20 @@ static BOOL NVBulletMarker(NSString *line, NSUInteger contentLength, NSUInteger 
 		if (![self shouldChangeTextInRange:edited replacementString:changeString])
 			continue;
 		[self replaceCharactersInRange:edited withString:changeString];
-		NSInteger delta = (NSInteger)[changeString length] - (NSInteger)edited.length;
-		if (NSMaxRange(edited) <= selection.location) {
-			selection.location += delta;
-		} else 		if (edited.location < NSMaxRange(selection)) {
-			if (edited.location <= selection.location)
-				selection.location = edited.location + [changeString length];
-			NSInteger newLength = (NSInteger)selection.length + delta;
-			selection.length = newLength > 0 ? (NSUInteger)newLength : 0;
+		[self adjustSelection:&selection forEditAt:edited replacementLength:[changeString length]];
+		/* The indent is gone. A bullet that lands on a numbered list becomes the next number there, and a number that lands on a bullet becomes that bullet. */
+		if (outdent && lineRange.location <= [[self string] length]) {
+			NSString *fresh = [self string];
+			NSRange freshLine = [fresh lineRangeForRange:NSMakeRange(lineRange.location, 0)];
+			NSRange markerInLine = NSMakeRange(NSNotFound, 0);
+			NSString *marker = NVListMarkerAfterOutdent(fresh, freshLine, tabWidth, &markerInLine);
+			if ([marker length] && markerInLine.location != NSNotFound) {
+				NSRange documentMarker = NSMakeRange(freshLine.location + markerInLine.location, markerInLine.length);
+				if (NSMaxRange(documentMarker) <= [fresh length] && [self shouldChangeTextInRange:documentMarker replacementString:marker]) {
+					[self replaceCharactersInRange:documentMarker withString:marker];
+					[self adjustSelection:&selection forEditAt:documentMarker replacementLength:[marker length]];
+				}
+			}
 		}
 	}
 	NSUInteger editedLength = [[self string] length];
@@ -4841,6 +4885,8 @@ static NSString *NVCoreOfLine(NSString *line) {
 }
 
 - (void)setSelectedRange:(NSRange)charRange affinity:(NSSelectionAffinity)affinity stillSelecting:(BOOL)stillSelectingFlag {
+	if (!NSEqualRanges(charRange, lastAutomaticallySelectedRange))
+		[self nv_allowSelectionScroll];
 	if (!markdownAdjustingSelection)
 		markdownSelectionLevel = 0;
 	[super setSelectedRange:charRange affinity:affinity stillSelecting:stillSelectingFlag];
@@ -4998,11 +5044,14 @@ static NSString *NVCoreOfLine(NSString *line) {
 	NSRange selection = [self selectedRange];
 	if (![text length] || selection.location > [text length])
 		return NO;
-	NSUInteger endLocation = selection.length ? NSMaxRange(selection) - 1 : selection.location;
-	if (endLocation >= [text length])
-		endLocation = [text length] - 1;
-	NSRange firstLine = [text lineRangeForRange:NSMakeRange(MIN(selection.location, [text length] - 1), 0)];
-	NSRange lastLine = [text lineRangeForRange:NSMakeRange(endLocation, 0)];
+	NSUInteger start = MIN(selection.location, [text length]);
+	NSUInteger endLocation = selection.length ? NSMaxRange(selection) : selection.location;
+	if (endLocation > [text length])
+		endLocation = [text length];
+	if (selection.length && endLocation)
+		endLocation -= 1;
+	NSRange firstLine = NVLineRangeForCaret(text, start);
+	NSRange lastLine = NVLineRangeForCaret(text, endLocation);
 	NSMutableArray *lines = [NSMutableArray array];
 	NSUInteger scan = firstLine.location;
 	BOOL found = NO;
